@@ -6,9 +6,24 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-char *paths[] = {"/bin/", "/usr/bin/", NULL};
+int removeFromPath(char** paths, int pathSize, char* removePath){
+    char** newPath = malloc(32 * sizeof(char*));
+    int j = 0;
+    for(int i = 0; i < pathSize; i++){
+        if(strcmp(paths[i], removePath) != 0){
+            newPath[j] = paths[i];
+            j++;
+        }
+    }
+    //no path was removed
+    if(j == pathSize){
+        return -1;
+    }
+    paths = newPath;
+    return 0;
+}
 
-int runCommand(char *command[], int commandSize)
+int runCommand(char *command[], int commandSize, char** paths, int pathSize)
 {
     // see if the redirection symbol is in the command and where is it
     int indexOfRedirection = -1;
@@ -20,7 +35,7 @@ int runCommand(char *command[], int commandSize)
     }
 
     if(indexOfRedirection != -1){
-        
+
         // check for redirection formating
         if(indexOfRedirection != commandSize - 2){
             write(STDOUT_FILENO, "Error: unable to parse redirection command\n", 42);
@@ -42,11 +57,20 @@ int runCommand(char *command[], int commandSize)
         close(tmpFd);
     }
 
-   
-    char *path = malloc(128);
-    strcpy(path, "/bin/");
-    strcat(path, command[0]);
-    execv(path, command);
+    //loop throught the paths and use access to see if the command is in the path
+    for(int i = pathSize-1; i >= 0; i--){
+        char* testPath = malloc(128);
+        strcpy(testPath, paths[i]);
+        strcat(testPath, "/");
+        strcat(testPath, command[0]);
+        if(access(testPath, F_OK) != -1){
+            execv(testPath, command);
+        }
+    }
+
+    // if the command is not in the path, print error
+    write(STDOUT_FILENO, "Error: command not found\n", 25);
+    return -1;
 }
 
 int getSeqCommands(char* buffer, char* seqCommands[]){
@@ -88,7 +112,12 @@ int parseCommand(char* unparsedCommand, char* parsedCommand[]){
 
 int main(void)
 {
-    
+    char** paths = malloc(32 * sizeof(char*));
+    //add initial path
+    paths[0] = malloc(5 * sizeof(char));
+    strcpy(paths[0], "/bin");
+    int pathSize = 1;   
+
     while(1){
         char* buffer = malloc(128); 
 
@@ -119,6 +148,42 @@ int main(void)
                     continue;
                 }
                 else if(strcmp(parsedCommand[0], "path") == 0){
+                    if(commandSize < 2){
+                        write(STDOUT_FILENO, "Error: unable to parse path command, provide add, remove or clear\n", 66);
+                        continue;
+                    }
+                    //add path
+                    if(strcmp(parsedCommand[1], "add") == 0){
+                        if(commandSize != 3){
+                            write(STDOUT_FILENO, "Error: unable to parse path command\n", 36);
+                            continue;
+                        }
+                        paths[pathSize] = malloc(sizeof(parsedCommand[2]) * sizeof(char));
+                        strcpy(paths[pathSize], parsedCommand[2]);
+                        pathSize++;
+                    }else if(strcmp(parsedCommand[1], "remove") == 0){ //remove path
+                        if(commandSize != 3){
+                            write(STDOUT_FILENO, "Error: unable to parse path command\n", 36);
+                            continue;
+                        }
+                        
+                        if(removeFromPath(paths, pathSize, parsedCommand[2]) == -1){
+                            write(STDOUT_FILENO, "Error: path not found\n", 22);
+                            continue;
+                        }
+
+                        pathSize--;
+
+                    }else if(strcmp(parsedCommand[1], "clear") == 0){ //clear path
+                        if(commandSize != 2){
+                            write(STDOUT_FILENO, "Error: unable to parse path command\n", 36);
+                            continue;
+                        }
+                        pathSize = 0;
+                    }
+                    else{
+                        write(STDOUT_FILENO, "Error: only add, remove, or clear is supported\n", 36);
+                    }
                     
                     continue;
                 }
@@ -126,7 +191,7 @@ int main(void)
                 int pid = fork();
                 if(pid == 0){
                     //run command
-                    runCommand(parsedCommand, commandSize);
+                    runCommand(parsedCommand, commandSize, paths, pathSize);
                     exit(0);
                 }
             }
